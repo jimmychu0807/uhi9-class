@@ -5,9 +5,9 @@ ffi = true
 fs_permissions = [{access = "read-write", path = ".forge-snapshots/"}]
 libs = ["lib"]
 out = "out"
-solc_version = "0.8.30"
 src = "src"
 via_ir = false
+ignored_error_codes = [2424]
 
 [lint]
 exclude_lints = ["screaming-snake-case-immutable", "screaming-snake-case-const"]
