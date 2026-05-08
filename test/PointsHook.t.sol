@@ -26,7 +26,6 @@ import {Test} from "forge-std/Test.sol";
 import {PointsHook} from "../src/PointsHook.sol";
 
 contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
-
     MockERC20 token;
 
     Currency ethCurrency = Currency.wrap(address(0));
@@ -55,42 +54,26 @@ contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
         token.approve(address(modifyLiquidityRouter), type(uint256).max);
 
         // Initialize a pool
-        (key, ) = initPool(
-            ethCurrency,
-            tokenCurrency,
-            hook,
-            3000,
-            SQRT_PRICE_1_1
-        );
+        (key,) = initPool(ethCurrency, tokenCurrency, hook, 3000, SQRT_PRICE_1_1);
 
         // Add some liquidity to the pool
         uint160 sqrtPriceAtTickLower = TickMath.getSqrtPriceAtTick(-60);
         uint160 sqrtPriceAtTickUpper = TickMath.getSqrtPriceAtTick(60);
 
         uint256 ethToAdd = 0.003 ether;
-        uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmount0(
-            SQRT_PRICE_1_1,
-            sqrtPriceAtTickUpper,
-            ethToAdd
-        );
+        uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmount0(SQRT_PRICE_1_1, sqrtPriceAtTickUpper, ethToAdd);
 
         console.log("liquidityDelta:", liquidityDelta);
 
-        uint256 tokenToAdd = LiquidityAmounts.getAmount1ForLiquidity(
-            sqrtPriceAtTickLower,
-            SQRT_PRICE_1_1,
-            liquidityDelta
-        );
+        uint256 tokenToAdd =
+            LiquidityAmounts.getAmount1ForLiquidity(sqrtPriceAtTickLower, SQRT_PRICE_1_1, liquidityDelta);
 
         console.log("amount1:", tokenToAdd);
 
         modifyLiquidityRouter.modifyLiquidity{value: ethToAdd}(
             key,
             ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: int256(uint256(liquidityDelta)),
-                salt: bytes32(0)
+                tickLower: -60, tickUpper: 60, liquidityDelta: int256(uint256(liquidityDelta)), salt: bytes32(0)
             }),
             ZERO_BYTES
         );
@@ -103,17 +86,12 @@ contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
         // Set user addr
         bytes memory hookData = abi.encode(address(this));
 
-        swapRouter.swap{ value: 0.001 ether}(
+        swapRouter.swap{value: 0.001 ether}(
             key,
             SwapParams({
-                zeroForOne: true,
-                amountSpecified: -0.001 ether,
-                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+                zeroForOne: true, amountSpecified: -0.001 ether, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             hookData
         );
 
@@ -123,5 +101,4 @@ contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
         // = 2 * 10**14
         assertEq(pointsBalanceAfterSwap - pointsBalanceOriginal, 2 * 10 ** 14);
     }
-
 }
