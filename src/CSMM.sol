@@ -5,8 +5,8 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-
+import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {BaseHook} from "@openzeppelin/uniswap-hooks/src/base/BaseHook.sol";
@@ -17,7 +17,14 @@ contract CSMM is BaseHook {
 
     error AddLiquidityThroughHook();
 
-    event HookSwap();
+    event HookSwap(
+        bytes32 indexed id,
+        address indexed sender,
+        int128 amt0,
+        int128 amt1,
+        uint128 hookLPfeeAmt0,
+        uint128 hookLPfeeAmt1
+    );
 
     event HookModifyLiquidity(bytes32 indexed id, address indexed sender, int128 amt0, int128 amt1);
 
@@ -109,5 +116,74 @@ contract CSMM is BaseHook {
             );
 
         return "";
+    }
+
+    // Override to use the curve: x + y = k, instead of x * y = k
+    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
+        internal
+        override
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
+        bool isExactInput = params.amountSpecified < 0;
+
+        // 4 types of swap:
+        //   - whether `params.zeroForOne` is true
+        //   - whether `isExactInput` is true
+
+        // BalanceSwapDelta is packed with two `int128` values.
+
+        int128 absInAmt;
+        int128 absOutAmt;
+        BeforeSwapDelta beforeSwapDelta;
+
+        // formulate the beforeSwapDelta structure
+        if (isExactInput) {
+            absInAmt = int128(-params.amountSpecified);
+            absOutAmt = absInAmt;
+            beforeSwapDelta = toBeforeSwapDelta(absInAmt, -absOutAmt);
+        } else {
+            absOutAmt = int128(params.amountSpecified);
+            absInAmt = absOutAmt;
+            beforeSwapDelta = toBeforeSwapDelta(-absInAmt, absOutAmt);
+        }
+
+        if (params.zeroForOne) {
+            key.currency0
+                .take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(absInAmt)),
+                    true // mint ERC-6909
+                );
+
+            key.currency1
+                .settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(absOutAmt)),
+                    true // burn from ERC-6909
+                );
+
+            emit HookSwap(PoolId.unwrap(key.toId()), sender, -absInAmt, absOutAmt, 0, 0);
+        } else {
+            key.currency0
+                .settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(absOutAmt)),
+                    true // burn from ERC-6909
+                );
+            key.currency1
+                .take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(absInAmt)),
+                    true // burn from ERC-6909
+                );
+
+            emit HookSwap(PoolId.unwrap(key.toId()), sender, absInAmt, -absOutAmt, 0, 0);
+        }
+
+        return (this.beforeSwap.selector, beforeSwapDelta, 0);
     }
 }
