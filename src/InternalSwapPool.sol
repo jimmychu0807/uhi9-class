@@ -30,7 +30,6 @@ contract InternalSwapPool is BaseHook {
 
     /// Min threshold for donations
     uint256 public constant DONATE_THRESHOLD_MIN = 0.0001 ether;
-
     /// The native token address
     address public immutable nativeToken;
 
@@ -42,6 +41,25 @@ contract InternalSwapPool is BaseHook {
 
     function poolFees(PoolKey calldata _poolKey) public view returns (ClaimableFees memory) {
         return _poolFees[_poolKey.toId()];
+    }
+
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+        return Hooks.Permissions({
+            beforeInitialize: false,
+            afterInitialize: false,
+            beforeAddLiquidity: false,
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: false,
+            afterRemoveLiquidity: false,
+            beforeSwap: true,
+            afterSwap: true,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: true,
+            afterSwapReturnDelta: true,
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: false
+        });
     }
 
     function depositFees(PoolKey calldata _poolKey, uint256 _amount0, uint256 _amount1) public {
@@ -144,24 +162,5 @@ contract InternalSwapPool is BaseHook {
         }
 
         _poolFees[poolId].amount0 -= donateAmount;
-    }
-
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
-        return Hooks.Permissions({
-            beforeInitialize: false,
-            afterInitialize: false,
-            beforeAddLiquidity: false,
-            afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: false,
-            beforeSwap: true,
-            afterSwap: true,
-            beforeDonate: false,
-            afterDonate: false,
-            beforeSwapReturnDelta: true,
-            afterSwapReturnDelta: true,
-            afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: false
-        });
     }
 }
