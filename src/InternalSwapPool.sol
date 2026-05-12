@@ -31,12 +31,12 @@ contract InternalSwapPool is BaseHook {
     /// Min threshold for donations
     uint256 public constant DONATE_THRESHOLD_MIN = 0.0001 ether;
     /// The native token address
-    address public immutable nativeToken;
+    address public immutable NATIVE_TOKEN;
 
     mapping(PoolId _poolId => ClaimableFees _fees) internal _poolFees;
 
     constructor(address _poolManager, address _nativeToken) BaseHook(IPoolManager(_poolManager)) {
-        nativeToken = _nativeToken;
+        NATIVE_TOKEN = _nativeToken;
     }
 
     function poolFees(PoolKey calldata _poolKey) public view returns (ClaimableFees memory) {
@@ -47,22 +47,22 @@ contract InternalSwapPool is BaseHook {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: false,
-            beforeAddLiquidity: false,
+            beforeAddLiquidity: true, // true
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
+            beforeRemoveLiquidity: true, // true
             afterRemoveLiquidity: false,
-            beforeSwap: true,
-            afterSwap: true,
+            beforeSwap: true, // true
+            afterSwap: true, // true
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: true,
-            afterSwapReturnDelta: true,
+            beforeSwapReturnDelta: true, // true
+            afterSwapReturnDelta: true, // true
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
     }
 
-    function depositFees(PoolKey calldata _poolKey, uint256 _amount0, uint256 _amount1) public {
+    function _depositFees(PoolKey calldata _poolKey, uint256 _amount0, uint256 _amount1) internal {
         _poolFees[_poolKey.toId()].amount0 += _amount0;
         _poolFees[_poolKey.toId()].amount1 += _amount1;
     }
@@ -137,7 +137,7 @@ contract InternalSwapPool is BaseHook {
 
         uint256 swapFee = uint256(uint128(swapAmount < 0 ? -swapAmount : swapAmount)) * 99 / 100;
 
-        depositFees(key, params.zeroForOne ? swapFee : 0, params.zeroForOne ? 0 : swapFee);
+        _depositFees(key, params.zeroForOne ? swapFee : 0, params.zeroForOne ? 0 : swapFee);
 
         swapFeeCurrency.take(poolManager, address(this), swapFee, false);
 
