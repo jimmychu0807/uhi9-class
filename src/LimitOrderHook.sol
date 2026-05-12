@@ -31,7 +31,11 @@ contract LimitOrderHook is BaseHook, ERC1155 {
     error NothingToClaim();
     error NotEnoughToClaim();
 
-    // string public baseURI;
+    /// storage
+    mapping(PoolId poolId => mapping(int24 tickToSellAt => mapping(bool zeroForOne => uint256 inputAmount))) public
+        pendingOrders;
+
+    mapping(uint256 orderId => uint256 claimsSupply) public claimTokensSupply;
 
     constructor(IPoolManager _manager, string memory _uri) BaseHook(_manager) ERC1155(_uri) {}
 
@@ -39,13 +43,13 @@ contract LimitOrderHook is BaseHook, ERC1155 {
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
-            afterInitialize: true,                      // true
+            afterInitialize: true, // true
             beforeAddLiquidity: false,
             afterAddLiquidity: false,
             beforeRemoveLiquidity: false,
             afterRemoveLiquidity: false,
             beforeSwap: false,
-            afterSwap: true,                            // true
+            afterSwap: true, // true
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
@@ -69,5 +73,17 @@ contract LimitOrderHook is BaseHook, ERC1155 {
     ) internal override returns (bytes4 selector_, int128 hookDeltaUnspecified_) {
         // TODO
         return (this.afterSwap.selector, 0);
+    }
+
+    function getLowerUsableTick(int24 tick, int24 tickSpacing) private pure returns (int24) {
+        int24 intervals = tick / tickSpacing;
+
+        if (tick < 0 && tick % tickSpacing != 0) intervals--;
+
+        return intervals * tickSpacing;
+    }
+
+    function getOrderId(PoolKey calldata key, int24 tick, bool zeroForOne) public pure returns (uint256) {
+        return uint256(keccak256(abi.encode(key.toId(), tick, zeroForOne)));
     }
 }
