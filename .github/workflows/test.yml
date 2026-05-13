@@ -2,8 +2,10 @@ name: Test Suite
 
 on:
   workflow_dispatch:
-  # push:
-  # pull_request:
+  push:
+    branches:
+      - main
+  pull_request:
 
 env:
   FOUNDRY_PROFILE: ci
