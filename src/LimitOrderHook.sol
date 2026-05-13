@@ -17,7 +17,7 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 // import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
 // import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
@@ -36,6 +36,8 @@ contract LimitOrderHook is BaseHook, ERC1155 {
         pendingOrders;
 
     mapping(uint256 orderId => uint256 claimsSupply) public claimTokensSupply;
+
+    mapping(uint256 orderId => uint256 outputClaimable) public claimableOutputTokens;
 
     constructor(IPoolManager _manager, string memory _uri) BaseHook(_manager) ERC1155(_uri) {}
 
@@ -85,5 +87,114 @@ contract LimitOrderHook is BaseHook, ERC1155 {
 
     function getOrderId(PoolKey calldata key, int24 tick, bool zeroForOne) public pure returns (uint256) {
         return uint256(keccak256(abi.encode(key.toId(), tick, zeroForOne)));
+    }
+
+    function placeOrder(PoolKey calldata key, int24 tickToSellAt, bool zeroForOne, uint256 inputAmount)
+        external
+        returns (int24)
+    {
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+
+        // effect
+        pendingOrders[key.toId()][tick][zeroForOne] += inputAmount;
+        claimTokensSupply[orderId] += inputAmount;
+        _mint(msg.sender, orderId, inputAmount, "");
+
+        // interaction
+        address sellToken = zeroForOne ? Currency.unwrap(key.currency0) : Currency.unwrap(key.currency1);
+        IERC20(sellToken).transferFrom(msg.sender, address(this), inputAmount);
+
+        return tick;
+    }
+
+    function cancelOrder(PoolKey calldata key, int24 tickToSellAt, bool zeroForOne, uint256 amtToCancel) external {
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+
+        // check
+        uint256 positionTokens = balanceOf(msg.sender, orderId);
+        if (amtToCancel > positionTokens) revert NotEnoughToClaim();
+
+        // effect
+        pendingOrders[key.toId()][tick][zeroForOne] -= amtToCancel;
+        claimTokensSupply[orderId] -= amtToCancel;
+        _burn(msg.sender, orderId, amtToCancel);
+
+        // interaction
+        address sellToken = zeroForOne ? Currency.unwrap(key.currency0) : Currency.unwrap(key.currency1);
+        IERC20(sellToken).transfer(msg.sender, amtToCancel);
+    }
+
+    function redeem(PoolKey calldata key, int24 tickToSellAt, bool zeroForOne, uint256 inputAmtToClaimFor) external {
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+
+        if (claimableOutputTokens[orderId] == 0) revert NothingToClaim();
+
+        uint256 claimTokens = balanceOf(msg.sender, orderId);
+        if (inputAmtToClaimFor > claimTokens) revert NotEnoughToClaim();
+
+        uint256 totalClaimableForPosition = claimableOutputTokens[orderId];
+        uint256 totalInputAmountForPosition = claimTokensSupply[orderId];
+
+        uint256 outputAmount = inputAmtToClaimFor.mulDivDown(totalClaimableForPosition, totalInputAmountForPosition);
+
+        // state
+        claimableOutputTokens[orderId] -= outputAmount;
+        claimTokensSupply[orderId] -= inputAmtToClaimFor;
+        _burn(msg.sender, orderId, inputAmtToClaimFor);
+
+        // effect
+        Currency token = zeroForOne ? key.currency1 : key.currency0;
+        token.transfer(msg.sender, outputAmount);
+    }
+
+    function swapAndSettleBalances(PoolKey calldata key, SwapParams memory params) internal returns (BalanceDelta) {
+        BalanceDelta delta = poolManager.swap(key, params, "");
+
+        if (params.zeroForOne) {
+            if (delta.amount0() < 0) {
+                _settle(key.currency0, uint128(-delta.amount0()));
+            }
+            if (delta.amount1() > 0) {
+                _take(key.currency1, uint128(delta.amount1()));
+            }
+        } else {
+            if (delta.amount1() < 0) {
+                _settle(key.currency1, uint128(-delta.amount1()));
+            }
+            if (delta.amount0() > 0) {
+                _take(key.currency0, uint128(delta.amount0()));
+            }
+        }
+        return delta;
+    }
+
+    function _settle(Currency currency, uint128 amount) internal {
+        poolManager.sync(currency);
+        currency.transfer(address(poolManager), amount);
+        poolManager.settle();
+    }
+
+    function _take(Currency currency, uint128 amount) internal {
+        poolManager.take(currency, address(this), amount);
+    }
+
+    function executeOrder(PoolKey calldata key, int24 tick, bool zeroForOne, uint256 inputAmount) internal {
+        BalanceDelta delta = swapAndSettleBalances(
+            key,
+            SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(inputAmount),
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+            })
+        );
+
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+        uint256 outputAmount = zeroForOne ? uint256(int256(delta.amount1())) : uint256(int256(delta.amount0()));
+
+        pendingOrders[key.toId()][tick][zeroForOne] -= inputAmount;
+        claimableOutputTokens[orderId] += outputAmount;
     }
 }
