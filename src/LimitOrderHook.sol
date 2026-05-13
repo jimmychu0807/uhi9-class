@@ -39,6 +39,8 @@ contract LimitOrderHook is BaseHook, ERC1155 {
 
     mapping(uint256 orderId => uint256 outputClaimable) public claimableOutputTokens;
 
+    mapping(PoolId poolId => int24 lastTick) public lastTicks;
+
     constructor(IPoolManager _manager, string memory _uri) BaseHook(_manager) ERC1155(_uri) {}
 
     // Base Hook functions
@@ -62,7 +64,7 @@ contract LimitOrderHook is BaseHook, ERC1155 {
     }
 
     function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
-        // TODO
+        lastTicks[key.toId()] = tick;
         return this.afterInitialize.selector;
     }
 
@@ -73,7 +75,19 @@ contract LimitOrderHook is BaseHook, ERC1155 {
         BalanceDelta delta,
         bytes calldata hookData
     ) internal override returns (bytes4 selector_, int128 hookDeltaUnspecified_) {
-        // TODO
+        // ensure the sender is not the own hook, i.e. recursive calling
+        if (sender != address(this)) {
+            bool tryMore = true;
+            int24 currentTick;
+
+            while (tryMore) {
+                // TODO
+                (tryMore, currentTick) = tryExecutingOrders(key, !params.zeroForOne);
+            }
+
+            lastTicks[key.toId()] = currentTick;
+        }
+
         return (this.afterSwap.selector, 0);
     }
 
@@ -196,5 +210,40 @@ contract LimitOrderHook is BaseHook, ERC1155 {
 
         pendingOrders[key.toId()][tick][zeroForOne] -= inputAmount;
         claimableOutputTokens[orderId] += outputAmount;
+    }
+
+    function tryExecutingOrders(PoolKey calldata key, bool executeZeroForOne)
+        internal
+        returns (bool tryMore, int24 newTick)
+    {
+        (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
+        int24 lastTick = lastTicks[key.toId()];
+
+        if (currentTick > lastTick) {
+            for (
+                int24 tick = getLowerUsableTick(lastTick, key.tickSpacing);
+                tick < currentTick;
+                tick += key.tickSpacing
+            ) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
+                if (inputAmount > 0) {
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        } else {
+            for (
+                int24 tick = getLowerUsableTick(lastTick, key.tickSpacing);
+                tick > currentTick;
+                tick -= key.tickSpacing
+            ) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
+                if (inputAmount > 0) {
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        }
+        return (false, currentTick);
     }
 }
