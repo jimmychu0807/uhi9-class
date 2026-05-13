@@ -108,10 +108,7 @@ contract LimitOrderHook is BaseHook, ERC1155 {
         return tick;
     }
 
-    function cancelOrder(PoolKey calldata key, int24 tickToSellAt, bool zeroForOne, uint256 amtToCancel)
-        external
-        returns (int24)
-    {
+    function cancelOrder(PoolKey calldata key, int24 tickToSellAt, bool zeroForOne, uint256 amtToCancel) external {
         int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
         uint256 orderId = getOrderId(key, tick, zeroForOne);
 
@@ -151,5 +148,53 @@ contract LimitOrderHook is BaseHook, ERC1155 {
         // effect
         Currency token = zeroForOne ? key.currency1 : key.currency0;
         token.transfer(msg.sender, outputAmount);
+    }
+
+    function swapAndSettleBalances(PoolKey calldata key, SwapParams memory params) internal returns (BalanceDelta) {
+        BalanceDelta delta = poolManager.swap(key, params, "");
+
+        if (params.zeroForOne) {
+            if (delta.amount0() < 0) {
+                _settle(key.currency0, uint128(-delta.amount0()));
+            }
+            if (delta.amount1() > 0) {
+                _take(key.currency1, uint128(delta.amount1()));
+            }
+        } else {
+            if (delta.amount1() < 0) {
+                _settle(key.currency1, uint128(-delta.amount1()));
+            }
+            if (delta.amount0() > 0) {
+                _take(key.currency0, uint128(delta.amount0()));
+            }
+        }
+        return delta;
+    }
+
+    function _settle(Currency currency, uint128 amount) internal {
+        poolManager.sync(currency);
+        currency.transfer(address(poolManager), amount);
+        poolManager.settle();
+    }
+
+    function _take(Currency currency, uint128 amount) internal {
+        poolManager.take(currency, address(this), amount);
+    }
+
+    function executeOrder(PoolKey calldata key, int24 tick, bool zeroForOne, uint256 inputAmount) internal {
+        BalanceDelta delta = swapAndSettleBalances(
+            key,
+            SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(inputAmount),
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+            })
+        );
+
+        uint256 orderId = getOrderId(key, tick, zeroForOne);
+        uint256 outputAmount = zeroForOne ? uint256(int256(delta.amount1())) : uint256(int256(delta.amount0()));
+
+        pendingOrders[key.toId()][tick][zeroForOne] -= inputAmount;
+        claimableOutputTokens[orderId] += outputAmount;
     }
 }
