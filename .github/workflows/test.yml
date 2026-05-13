@@ -25,12 +25,12 @@ jobs:
           version: stable
 
       - name: Build
+        id: build
         run: |
           forge --version
           forge build --sizes
-        id: build
 
       - name: Test
+        id: test
         run: |
           forge test -vvv
-        id: test
